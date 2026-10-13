@@ -510,6 +510,20 @@ function densityProblems(days, policy) {
   });
 }
 
+function mealCoverageProblems(days) {
+  return (days || []).flatMap((day, index, allDays) => {
+    // Arrival and departure days are allowed to be irregular because of flights.
+    if (index === 0 || index === allDays.length - 1) return [];
+    const foodTimes = (day.items || [])
+      .filter(item => /^식비/.test(String(item.category || '')))
+      .map(item => timeToMinutes(item.startTime))
+      .filter(Number.isFinite);
+    const hasLunch = foodTimes.some(time => time >= 11 * 60 && time <= 14 * 60 + 30);
+    const hasDinner = foodTimes.some(time => time >= 17 * 60 && time <= 21 * 60 + 30);
+    return hasLunch && hasDinner ? [] : [{ day: day.day, date: day.date, missing: [!hasLunch && '점심', !hasDinner && '저녁'].filter(Boolean) }];
+  });
+}
+
 function requestedVenueType(item) {
   const text = `${item?.category || ''} ${item?.note || ''} ${item?.place || ''}`;
   if (/^쇼핑/.test(String(item?.category || ''))) return 'shopping';
@@ -764,7 +778,8 @@ export default async function handler(request, response) {
 7. category는 반드시 '항공', '숙박', '식비', '교통', '쇼핑', '비상금' 중 하나로 시작한다. 비용은 반드시 travelers 전체 일행 기준이며, adults와 children을 반영한다. 1인 가격을 그대로 costKrw에 쓰는 것은 금지다. 식비·입장료·인원별 교통은 note에 반드시 '¥1,500 × 성인 2명 = ¥3,000 (전 일행 2명 기준)'처럼 1인 가격 × 인원 = 총액 산식을 쓰고, costLocal/costKrw에는 그 총액을 넣어라. 입력 budgetKrw는 반드시 지켜야 하는 총 한도다. 특히 숙박비는 위 예산 설계 제약의 숙박 상한을 넘기지 말고, 상한을 넘는 호텔 검색 결과는 선택하지 마라. budget 객체는 일정표 items의 costKrw를 카테고리별로 합산한 값이어야 한다.
 8. 검색 컨텍스트에 요금이 있으면 해당 요금을 우선 반영하고 note에 검색 출처의 제목을 짧게 적어라. 항공권 가격은 반드시 실제 '항공 이동' 한 행의 costKrw와 costLocal에 넣고, 출국 수속·공항 도착 행에는 중복으로 넣지 마라. 검색에 요금이 없더라도 현지 통화 금액과 원화 추정액을 채워야 하며 note에는 '검색 기반 추정'이라고 적어라. travelers는 전체 일행 수, adults는 성인 수, children은 어린이 수다. safetyCards에는 국가별 긴급전화, 대한민국 공관/영사 연락 확인 안내, 현지 주의사항을 넣되 확실하지 않은 전화나 주소는 '공식 확인 필요'로 표시하라.
 9. 식비와 쇼핑 일정의 place는 반드시 Google Maps 국가·도시 검증 장소 후보에 있는 **정확한 상호명**을 그대로 사용하라. 후보에 없는 상호명, 다른 나라·도시의 동명 상호명, 검색 컨텍스트에만 있고 Google Maps 후보로 검증되지 않은 상호명은 금지다. 후보 객체의 city와 countryCode가 일정의 도시·국가를 뜻한다. 예를 들어 후쿠오카 일정에는 city가 후쿠오카이고 countryCode가 JP인 후보만 쓴다. 같은 이름이 서울에도 있어도 한국 후보를 절대 쓰지 마라.
-10. 일정 밀도 정책은 선택 사항이 아니라 하드 제약이다. 일반일 핵심 방문 수가 정책 범위를 벗어나면 안 된다. 핵심 방문은 식사·관광·쇼핑·예약 카페처럼 실제 방문하는 장소이고, 공항 수속·항공·호텔 체크인/체크아웃·호텔 출발/복귀는 핵심 방문 수에 포함하지 않는다. 알차게(높음)라면 일반일에 4~5개의 실제 핵심 방문을, 매우 높음이라면 5~6개를 넣되, 무리한 장거리 이동으로 숫자만 채우면 안 된다.`;
+10. 일정 밀도 정책은 선택 사항이 아니라 하드 제약이다. 일반일 핵심 방문 수가 정책 범위를 벗어나면 안 된다. 핵심 방문은 식사·관광·쇼핑·예약 카페처럼 실제 방문하는 장소이고, 공항 수속·항공·호텔 체크인/체크아웃·호텔 출발/복귀는 핵심 방문 수에 포함하지 않는다. 알차게(높음)라면 일반일에 4~5개의 실제 핵심 방문을, 매우 높음이라면 5~6개를 넣되, 무리한 장거리 이동으로 숫자만 채우면 안 된다.
+11. 도착일·출국일을 제외한 모든 일반 체류일에는 실제 고유 상호명의 점심 식사(11:00~14:30)와 저녁 식사(17:00~21:30)를 각각 별도 '식비' 행으로 반드시 넣어라. 카페·쇼핑·숙소 복귀로 식사를 대체하지 말고, 두 식사는 서로 다른 실제 식당이어야 한다.`;
     const upstream = await fetch('https://api.openai.com/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }, body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'system', content: 'You are a meticulous travel planner. Return only structured JSON.' }, { role: 'user', content: prompt }], response_format: { type: 'json_schema', json_schema: schema }, temperature: 0.5 }) });
     const payload = await upstream.json();
     if (!upstream.ok) throw new Error(payload.error?.message || 'OpenAI 요청 실패');
@@ -776,12 +791,12 @@ export default async function handler(request, response) {
     const duplicateFoods = duplicateFoodPlaces(plan.days);
     const missingFlightCost = flightCostProblems(plan.days);
     const invalidDensity = densityProblems(plan.days, densityPlan);
+    const mealProblems = mealCoverageProblems(plan.days);
     const invalidVenues = venueVerificationProblems(plan.days, input, routePlan, research.venueCandidates);
-    // The first plan is returned as soon as its budget is viable.  Deep quality
-    // repairs are handled by deterministic post-processing below; an extra LLM
-    // pass here made every otherwise valid request wait unnecessarily.
-    if (false && (genericPlaces.length || invalidStays.length || invalidPartyCosts.length || invalidLodgingCosts.length || duplicateFoods.length || missingFlightCost || invalidDensity.length || invalidVenues.length)) {
-      const repairPrompt = `아래 여행 계획 JSON을 고쳐라. 일반명/모호한 place: ${JSON.stringify(genericPlaces.map(item => item.place))}. 중복 식당(각각 다른 실제 식당으로 교체): ${JSON.stringify(duplicateFoods)}. 국가·도시 Google Maps 검증 실패 식비/쇼핑 장소: ${JSON.stringify(invalidVenues)}. 일정 밀도 위반: ${JSON.stringify(invalidDensity)}. 누락/오류 숙박 배분: ${JSON.stringify(invalidStays)}. 숙박 총액 산식 오류: ${JSON.stringify(invalidLodgingCosts.map(item => ({ place: item.place, costLocal: item.costLocal, note: item.note })))}. 일행 인원 산식이 누락된 유료 항목: ${JSON.stringify(invalidPartyCosts.map(item => ({ place: item.place, category: item.category, costLocal: item.costLocal, note: item.note })))}. 항공료 누락: ${missingFlightCost}. SerpApi 항공 후보: ${JSON.stringify(research.flights)}. SerpApi Google Hotels 날짜·인원별 총액 후보: ${JSON.stringify(research.hotels)}. Google Maps 숙소·지도 후보: ${JSON.stringify(research.lodgingCandidates)}. Google Maps 국가·도시 검증 식당·쇼핑 후보: ${JSON.stringify(research.venueCandidates)}. 다도시 동선·숙박 제약: ${routePlan.text}. 일정 밀도 제약: 일반일 핵심 방문 ${densityPlan.fullDayMin}~${densityPlan.fullDayMax}개, 도착·출국일 최대 ${densityPlan.edgeDayMax}개, 외부 일정 사이 최소 ${densityPlan.bufferMinutes}분 버퍼. 전체 JSON 형식을 유지하되, 각 place를 해당 도시의 실제 고유 상호명·공식 장소명으로 교체하라. 식비와 쇼핑은 반드시 Google Maps 국가·도시 검증 후보의 정확한 이름만 쓰고, 다른 나라·도시의 동명 장소는 절대 쓰지 마라. 숙박은 SerpApi Google Hotels 후보의 실제 호텔과 해당 check-in/check-out 총액을 우선 사용한다. totalKrw는 이미 해당 도시 전체 N박·입력 인원 기준이므로 다시 N박을 곱하지 않는다. 항공은 SerpApi 후보가 있으면 그 시각·가격을 사용한다. '현지 식당', '도쿄 호텔', '숙소', '카페', '공항', '식당', '호텔', '~근처 식당', '~근처 이자카야', '인근/주변 식당' 같은 일반명은 절대 남기지 마라. 모든 식비 행은 서로 다른 실제 식당 상호명을 써라. 호텔 출발/복귀/체크인/체크아웃은 같은 실제 호텔명을 써라. 숙박 항목 note에는 SerpApi 총액이면 '도시명 N박 · SerpApi Google Hotels 검색 총액 ₩123,000 (전 일행 기준)'을, 1박 가격만 있을 때는 '도시명 N박 · ¥12,000 × 3박 = ¥36,000' 형태의 산식을 쓰고 costLocal/costKrw에는 총액을 넣어라. 항공 행에는 왕복 총항공료를 반드시 costLocal/costKrw에 넣어라. 유료 식비·입장료·교통·쇼핑은 성인 ${input.adults}명·어린이 ${input.children}명, 총 ${Number(input.adults) + Number(input.children)}명 기준으로 '1인 가격 × 인원 = 총액' 산식을 note에 넣어라. 검색 컨텍스트: ${JSON.stringify(sourceContext)}. 예산과 시간, 카테고리, 비용은 가능한 유지하라. 원본 JSON: ${JSON.stringify(plan)}`;
+    // Exactly one review pass catches implausible first drafts without restoring
+    // the former multi-pass generation delay.
+    {
+      const repairPrompt = `아래 여행 계획 JSON을 한 번만 최종 검토하고 고쳐라. 일반명/모호한 place: ${JSON.stringify(genericPlaces.map(item => item.place))}. 중복 식당(각각 다른 실제 식당으로 교체): ${JSON.stringify(duplicateFoods)}. 국가·도시 Google Maps 검증 실패 식비/쇼핑 장소: ${JSON.stringify(invalidVenues)}. 일정 밀도 위반: ${JSON.stringify(invalidDensity)}. 일반 체류일의 누락 식사: ${JSON.stringify(mealProblems)}. 누락/오류 숙박 배분: ${JSON.stringify(invalidStays)}. 숙박 총액 산식 오류: ${JSON.stringify(invalidLodgingCosts.map(item => ({ place: item.place, costLocal: item.costLocal, note: item.note })))}. 일행 인원 산식이 누락된 유료 항목: ${JSON.stringify(invalidPartyCosts.map(item => ({ place: item.place, category: item.category, costLocal: item.costLocal, note: item.note })))}. 항공료 누락: ${missingFlightCost}. SerpApi 항공 후보: ${JSON.stringify(research.flights)}. SerpApi Google Hotels 날짜·인원별 총액 후보: ${JSON.stringify(research.hotels)}. Google Maps 숙소·지도 후보: ${JSON.stringify(research.lodgingCandidates)}. Google Maps 국가·도시 검증 식당·쇼핑 후보: ${JSON.stringify(research.venueCandidates)}. 다도시 동선·숙박 제약: ${routePlan.text}. 일정 밀도 제약: 일반일 핵심 방문 ${densityPlan.fullDayMin}~${densityPlan.fullDayMax}개, 도착·출국일 최대 ${densityPlan.edgeDayMax}개, 외부 일정 사이 최소 ${densityPlan.bufferMinutes}분 버퍼. 전체 JSON 형식을 유지하되, 각 place를 해당 도시의 실제 고유 상호명·공식 장소명으로 교체하라. 식비와 쇼핑은 반드시 Google Maps 국가·도시 검증 후보의 정확한 이름만 쓰고, 다른 나라·도시의 동명 장소는 절대 쓰지 마라. 일반 체류일에는 11:00~14:30 사이의 실제 식당 점심과 17:00~21:30 사이의 실제 식당 저녁을 각각 한 행씩 반드시 넣고, 카페·쇼핑·숙소 복귀로 대체하지 마라. 숙박은 SerpApi Google Hotels 후보의 실제 호텔과 해당 check-in/check-out 총액을 우선 사용한다. totalKrw는 이미 해당 도시 전체 N박·입력 인원 기준이므로 다시 N박을 곱하지 않는다. 항공은 SerpApi 후보가 있으면 그 시각·가격을 사용한다. '현지 식당', '도쿄 호텔', '숙소', '카페', '공항', '식당', '호텔', '~근처 식당', '~근처 이자카야', '인근/주변 식당' 같은 일반명은 절대 남기지 마라. 모든 식비 행은 서로 다른 실제 식당 상호명을 써라. 호텔 출발/복귀/체크인/체크아웃은 같은 실제 호텔명을 써라. 숙박 항목 note에는 SerpApi 총액이면 '도시명 N박 · SerpApi Google Hotels 검색 총액 ₩123,000 (전 일행 기준)'을, 1박 가격만 있을 때는 '도시명 N박 · ¥12,000 × 3박 = ¥36,000' 형태의 산식을 쓰고 costLocal/costKrw에는 총액을 넣어라. 항공 행에는 왕복 총항공료를 반드시 costLocal/costKrw에 넣어라. 유료 식비·입장료·교통·쇼핑은 성인 ${input.adults}명·어린이 ${input.children}명, 총 ${Number(input.adults) + Number(input.children)}명 기준으로 '1인 가격 × 인원 = 총액' 산식을 note에 넣어라. 검색 컨텍스트: ${JSON.stringify(sourceContext)}. 예산과 시간, 카테고리, 비용은 가능한 유지하라. 원본 JSON: ${JSON.stringify(plan)}`;
       const repaired = await fetch('https://api.openai.com/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }, body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'system', content: 'You repair travel JSON. Return only structured JSON with specific real venue names.' }, { role: 'user', content: repairPrompt }], response_format: { type: 'json_schema', json_schema: schema }, temperature: 0.2 }) });
       const repairedPayload = await repaired.json();
       if (repaired.ok) plan = JSON.parse(repairedPayload.choices[0].message.content);
