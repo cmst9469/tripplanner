@@ -69,8 +69,8 @@
     const rate = exchangeRates[currency.unit];
     if (!Number.isFinite(amount) || amount < 0) { window.alert('현지 통화 금액을 숫자로 입력해 주세요.'); return; }
     if (!rate) { window.alert('실시간 환율을 불러오는 중입니다. 잠시 후 다시 시도해 주세요.'); return; }
-    item.costLocal = `${currency.symbol}${amount.toLocaleString('en-US')}`;
-    item.costKrw = Math.round(amount * (currency.unit === 'JPY(100)' ? rate / 100 : rate));
+    item.costLocal = formatLocalCost(currency, amount);
+    item.costKrw = Math.round(amount * ratePerUnit(currency.unit));
     item.note = `${item.note || ''}${item.note ? ' · ' : ''}사용자 입력 예상 비용`;
     recalculateBudget(); render();
   }
@@ -83,12 +83,29 @@
     const rate = exchangeRates[currency.unit];
     if (!Number.isFinite(amount) || amount < 0) { window.alert('현지 통화 금액을 숫자로 입력해 주세요.'); return; }
     if (!rate) { window.alert('실시간 환율을 불러오는 중입니다. 잠시 후 다시 시도해 주세요.'); return; }
-    data.manualEmergencyLocal = `${currency.symbol}${amount.toLocaleString('en-US')}`;
-    data.manualEmergencyKrw = Math.round(amount * (currency.unit === 'JPY(100)' ? rate / 100 : rate));
+    data.manualEmergencyLocal = formatLocalCost(currency, amount);
+    data.manualEmergencyKrw = Math.round(amount * ratePerUnit(currency.unit));
     recalculateBudget(); render();
   }
 
   function exchangeDate() { return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' }).replaceAll('-', ''); }
+  const currencyMeta = {
+    'JPY(100)': { unit: 'JPY(100)', symbol: '¥' }, EUR: { unit: 'EUR', symbol: '€' }, GBP: { unit: 'GBP', symbol: '£' }, THB: { unit: 'THB', symbol: '฿' }, SGD: { unit: 'SGD', symbol: 'S$' }, TWD: { unit: 'TWD', symbol: 'NT$' }, HKD: { unit: 'HKD', symbol: 'HK$' }, 'VND(100)': { unit: 'VND(100)', symbol: '₫' }, USD: { unit: 'USD', symbol: 'US$' }
+  };
+  function formatLocalCost(currency, amount) { return `${currency.symbol}${Math.round(Number(amount || 0)).toLocaleString('en-US')}`; }
+  function ratePerUnit(unit, rates = exchangeRates) { const rate = Number(rates[unit] || 0); return /\(100\)$/.test(unit) ? rate / 100 : rate; }
+  function destinationCurrency() {
+    const destination = String(data.trip?.destination || '');
+    if (/일본|도쿄|오사카|후쿠오카|교토|삿포로/.test(destination)) return currencyMeta['JPY(100)'];
+    if (/프랑스|파리|이탈리아|로마|스페인|바르셀로나|독일|포르투갈/.test(destination)) return currencyMeta.EUR;
+    if (/영국|런던/.test(destination)) return currencyMeta.GBP;
+    if (/태국|방콕/.test(destination)) return currencyMeta.THB;
+    if (/싱가포르/.test(destination)) return currencyMeta.SGD;
+    if (/대만|타이베이|가오슝|타이중|taiwan|taipei|kaohsiung|taichung/i.test(destination)) return currencyMeta.TWD;
+    if (/홍콩|hong kong/i.test(destination)) return currencyMeta.HKD;
+    if (/베트남|하노이|다낭|호치민|vietnam|hanoi|da nang|ho chi minh/i.test(destination)) return currencyMeta['VND(100)'];
+    return currencyMeta.USD;
+  }
   function parseLocalCost(value) {
     const text = String(value || '').replaceAll(',', '');
     const amount = Number((text.match(/[0-9]+(?:\.[0-9]+)?/) || [])[0]);
@@ -98,18 +115,15 @@
     if (/£|GBP/i.test(text)) return { unit: 'GBP', amount };
     if (/฿|THB/i.test(text)) return { unit: 'THB', amount };
     if (/S\$|SGD/i.test(text)) return { unit: 'SGD', amount };
-    if (/US\$|USD/i.test(text)) return { unit: 'USD', amount };
+    if (/NT\$|TWD/i.test(text)) return { unit: 'TWD', amount };
+    if (/HK\$|HKD/i.test(text)) return { unit: 'HKD', amount };
+    if (/₫|VND/i.test(text)) return { unit: 'VND(100)', amount };
+    if (/US\$|USD|\$/i.test(text)) return { unit: 'USD', amount };
     return null;
   }
   function currencyForItem(item) {
-    const parsed = parseLocalCost(item.costLocal); if (parsed) return { unit: parsed.unit, symbol: parsed.unit === 'JPY(100)' ? '¥' : parsed.unit === 'EUR' ? '€' : parsed.unit === 'GBP' ? '£' : parsed.unit === 'THB' ? '฿' : parsed.unit === 'SGD' ? 'S$' : '$' };
-    const destination = String(data.trip?.destination || '');
-    if (/일본|도쿄|오사카|후쿠오카|교토|삿포로/.test(destination)) return { unit: 'JPY(100)', symbol: '¥' };
-    if (/프랑스|파리|이탈리아|로마|스페인|바르셀로나|독일|포르투갈/.test(destination)) return { unit: 'EUR', symbol: '€' };
-    if (/영국|런던/.test(destination)) return { unit: 'GBP', symbol: '£' };
-    if (/태국|방콕/.test(destination)) return { unit: 'THB', symbol: '฿' };
-    if (/싱가포르/.test(destination)) return { unit: 'SGD', symbol: 'S$' };
-    return { unit: 'USD', symbol: '$' };
+    const parsed = parseLocalCost(item.costLocal);
+    return parsed ? currencyMeta[parsed.unit] || destinationCurrency() : destinationCurrency();
   }
   async function applyLiveExchangeRates() {
     try {
@@ -117,14 +131,22 @@
       const payload = await response.json(); if (!response.ok || !Array.isArray(payload.items)) return;
       const rates = Object.fromEntries(payload.items.map(item => [item.cur_unit, Number(String(item.deal_bas_r).replaceAll(',', ''))])); exchangeRates = rates;
       let changed = false;
+      const destinationCurrencyMeta = destinationCurrency();
       data.days.forEach(day => day.items.forEach(item => {
-        const local = parseLocalCost(item.costLocal), rate = local && rates[local.unit];
+        const local = parseLocalCost(item.costLocal);
+        const shouldUseDestinationCurrency = !isAirportOrFlight(item) && Number(item.costKrw || 0) > 0 && !/(무료|도보|포함)/.test(String(item.costLocal || ''));
+        if (shouldUseDestinationCurrency && (!local || local.unit !== destinationCurrencyMeta.unit) && ratePerUnit(destinationCurrencyMeta.unit, rates)) {
+          item.costLocal = formatLocalCost(destinationCurrencyMeta, Number(item.costKrw) / ratePerUnit(destinationCurrencyMeta.unit, rates));
+          changed = true;
+          return;
+        }
+        const rate = local && ratePerUnit(local.unit, rates);
         if (!rate) return;
-        item.costKrw = Math.round(local.amount * (local.unit === 'JPY(100)' ? rate / 100 : rate)); changed = true;
+        item.costKrw = Math.round(local.amount * rate); changed = true;
       }));
       const emergency = parseLocalCost(data.manualEmergencyLocal);
       if (emergency && rates[emergency.unit]) {
-        data.manualEmergencyKrw = Math.round(emergency.amount * (emergency.unit === 'JPY(100)' ? rates[emergency.unit] / 100 : rates[emergency.unit]));
+        data.manualEmergencyKrw = Math.round(emergency.amount * ratePerUnit(emergency.unit, rates));
         changed = true;
       }
       if (changed) {

@@ -581,10 +581,11 @@ function currencyHint(destination = '') {
   if (/영국|런던/.test(value)) return { symbol: '£', krwPerUnit: 1900 };
   if (/태국|방콕/.test(value)) return { symbol: '฿', krwPerUnit: 42 };
   if (/베트남|하노이|다낭|호치민/.test(value)) return { symbol: '₫', krwPerUnit: 0.056 };
-  if (/대만|타이베이/.test(value)) return { symbol: 'NT$', krwPerUnit: 45 };
+  if (/대만|타이베이|가오슝|타이중|taiwan|taipei|kaohsiung|taichung/i.test(value)) return { symbol: 'NT$', krwPerUnit: 45 };
   if (/홍콩/.test(value)) return { symbol: 'HK$', krwPerUnit: 185 };
   if (/싱가포르/.test(value)) return { symbol: 'S$', krwPerUnit: 1070 };
-  return { symbol: '$', krwPerUnit: 1450 };
+  if (/미국|미합중국|뉴욕|로스앤젤레스|라스베이거스|하와이|샌프란시스코|united states|usa|new york|los angeles|las vegas|hawaii|san francisco/i.test(value)) return { symbol: 'US$', krwPerUnit: 1450 };
+  return { symbol: 'US$', krwPerUnit: 1450 };
 }
 
 function normalizeItineraryDetails(days, destination) {
@@ -776,7 +777,10 @@ export default async function handler(request, response) {
     const missingFlightCost = flightCostProblems(plan.days);
     const invalidDensity = densityProblems(plan.days, densityPlan);
     const invalidVenues = venueVerificationProblems(plan.days, input, routePlan, research.venueCandidates);
-    if (genericPlaces.length || invalidStays.length || invalidPartyCosts.length || invalidLodgingCosts.length || duplicateFoods.length || missingFlightCost || invalidDensity.length || invalidVenues.length) {
+    // The first plan is returned as soon as its budget is viable.  Deep quality
+    // repairs are handled by deterministic post-processing below; an extra LLM
+    // pass here made every otherwise valid request wait unnecessarily.
+    if (false && (genericPlaces.length || invalidStays.length || invalidPartyCosts.length || invalidLodgingCosts.length || duplicateFoods.length || missingFlightCost || invalidDensity.length || invalidVenues.length)) {
       const repairPrompt = `아래 여행 계획 JSON을 고쳐라. 일반명/모호한 place: ${JSON.stringify(genericPlaces.map(item => item.place))}. 중복 식당(각각 다른 실제 식당으로 교체): ${JSON.stringify(duplicateFoods)}. 국가·도시 Google Maps 검증 실패 식비/쇼핑 장소: ${JSON.stringify(invalidVenues)}. 일정 밀도 위반: ${JSON.stringify(invalidDensity)}. 누락/오류 숙박 배분: ${JSON.stringify(invalidStays)}. 숙박 총액 산식 오류: ${JSON.stringify(invalidLodgingCosts.map(item => ({ place: item.place, costLocal: item.costLocal, note: item.note })))}. 일행 인원 산식이 누락된 유료 항목: ${JSON.stringify(invalidPartyCosts.map(item => ({ place: item.place, category: item.category, costLocal: item.costLocal, note: item.note })))}. 항공료 누락: ${missingFlightCost}. SerpApi 항공 후보: ${JSON.stringify(research.flights)}. SerpApi Google Hotels 날짜·인원별 총액 후보: ${JSON.stringify(research.hotels)}. Google Maps 숙소·지도 후보: ${JSON.stringify(research.lodgingCandidates)}. Google Maps 국가·도시 검증 식당·쇼핑 후보: ${JSON.stringify(research.venueCandidates)}. 다도시 동선·숙박 제약: ${routePlan.text}. 일정 밀도 제약: 일반일 핵심 방문 ${densityPlan.fullDayMin}~${densityPlan.fullDayMax}개, 도착·출국일 최대 ${densityPlan.edgeDayMax}개, 외부 일정 사이 최소 ${densityPlan.bufferMinutes}분 버퍼. 전체 JSON 형식을 유지하되, 각 place를 해당 도시의 실제 고유 상호명·공식 장소명으로 교체하라. 식비와 쇼핑은 반드시 Google Maps 국가·도시 검증 후보의 정확한 이름만 쓰고, 다른 나라·도시의 동명 장소는 절대 쓰지 마라. 숙박은 SerpApi Google Hotels 후보의 실제 호텔과 해당 check-in/check-out 총액을 우선 사용한다. totalKrw는 이미 해당 도시 전체 N박·입력 인원 기준이므로 다시 N박을 곱하지 않는다. 항공은 SerpApi 후보가 있으면 그 시각·가격을 사용한다. '현지 식당', '도쿄 호텔', '숙소', '카페', '공항', '식당', '호텔', '~근처 식당', '~근처 이자카야', '인근/주변 식당' 같은 일반명은 절대 남기지 마라. 모든 식비 행은 서로 다른 실제 식당 상호명을 써라. 호텔 출발/복귀/체크인/체크아웃은 같은 실제 호텔명을 써라. 숙박 항목 note에는 SerpApi 총액이면 '도시명 N박 · SerpApi Google Hotels 검색 총액 ₩123,000 (전 일행 기준)'을, 1박 가격만 있을 때는 '도시명 N박 · ¥12,000 × 3박 = ¥36,000' 형태의 산식을 쓰고 costLocal/costKrw에는 총액을 넣어라. 항공 행에는 왕복 총항공료를 반드시 costLocal/costKrw에 넣어라. 유료 식비·입장료·교통·쇼핑은 성인 ${input.adults}명·어린이 ${input.children}명, 총 ${Number(input.adults) + Number(input.children)}명 기준으로 '1인 가격 × 인원 = 총액' 산식을 note에 넣어라. 검색 컨텍스트: ${JSON.stringify(sourceContext)}. 예산과 시간, 카테고리, 비용은 가능한 유지하라. 원본 JSON: ${JSON.stringify(plan)}`;
       const repaired = await fetch('https://api.openai.com/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }, body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'system', content: 'You repair travel JSON. Return only structured JSON with specific real venue names.' }, { role: 'user', content: repairPrompt }], response_format: { type: 'json_schema', json_schema: schema }, temperature: 0.2 }) });
       const repairedPayload = await repaired.json();
@@ -784,7 +788,7 @@ export default async function handler(request, response) {
     }
     let derivedBudget;
     let planningWarning = '';
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
       attachAccommodationBoundaries(plan, input, accommodationPlan);
       materializeFlightCosts(plan.days);
       consolidateRoundTripAirfare(plan.days, plan.trip.destination);
@@ -798,8 +802,11 @@ export default async function handler(request, response) {
       const missingFlight = flightCostProblems(plan.days);
       const invalidDensity = densityProblems(plan.days, densityPlan);
       const invalidVenues = venueVerificationProblems(plan.days, input, routePlan, research.venueCandidates);
-      if (!overTotal && !overAirfare && !overLodging && !invalidLodging.length && !invalidParty.length && !missingFlight && !invalidDensity.length && !invalidVenues.length) break;
-      if (attempt === 2) {
+      const exceedsBudget = overTotal || overAirfare || overLodging;
+      // Do not ask the model to regenerate a plan that already fits the budget.
+      // The remaining deterministic checks are surfaced/repaired locally later.
+      if (!exceedsBudget) break;
+      if (attempt === 1) {
         const issues = [
           overTotal && `일정표 합계가 권장 상한 ₩${budgetPlan.totalCeiling.toLocaleString('ko-KR')}을 초과`,
           overAirfare && `항공료가 권장 상한 ₩${budgetPlan.airfareCeiling.toLocaleString('ko-KR')}을 초과`,
